@@ -42,6 +42,13 @@ for si, s in enumerate(PLAN):
             seen[u["block"]] = seen.get(u["block"], 0) + 1
             if "caption_block" in u:
                 seen[u["caption_block"]] = seen.get(u["caption_block"], 0) + 1
+        elif u["kind"] == "figure_entry":
+            tu, iu = u["text_unit"], u["image_unit"]
+            lines.append(f"   BEAT-figure: [{tu['block']}]{btext(tu['block'])} cap={iu.get('caption','')[:20]}")
+            seen[tu["block"]] = seen.get(tu["block"], 0) + 1
+            seen[iu["block"]] = seen.get(iu["block"], 0) + 1
+            if "caption_block" in iu:
+                seen[iu["caption_block"]] = seen.get(iu["caption_block"], 0) + 1
         elif u["kind"] == "imgpair":
             caps = " ┃ ".join(f"[{im['block']}]{im.get('caption','')[:16]}" for im in u["imgs"])
             lines.append(f"   BEAT-imgpair: {caps}")

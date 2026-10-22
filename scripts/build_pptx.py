@@ -344,8 +344,9 @@ def _append_runs_mixed(p_el, runs, pt, body_color, red_first_label=False):
             etree.SubElement(p_el, qn("a:br"))
             continue
         if "math" in r:
-            color = label_color if (in_label and not seen_text) else body_color
-            append_run_xml(p_el, [r], pt, color)
+            # 公式属正文内容，normal 段一律正文色；段首公式不得误判为引导词标签
+            # （答案行走 answer 分支整段蓝，不受此影响）——EA-38
+            append_run_xml(p_el, [r], pt, body_color)
             seen_text = True
             continue
         if "img" in r or "t" not in r:
@@ -664,7 +665,8 @@ def build_content_slide(slide, s, page_no, total):
                         txBody = cap.text_frame._txBody
                         p_el = etree.SubElement(txBody, qn("a:p"))
                         set_ppr(p_el, 11, algn="ctr", spc_aft=0)
-                        append_run_xml(p_el, [{"t": im["caption"]}], 11, C_CAP)
+                        append_run_xml(p_el, im.get("caption_runs") or [{"t": im["caption"]}],
+                                       11, C_CAP)
                         shapes.append(cap)
                 y += int(0.32 * EMU_IN) + int(0.08 * EMU_IN)
             elif u["kind"] == "image":
@@ -681,7 +683,33 @@ def build_content_slide(slide, s, page_no, total):
                     txBody = cap.text_frame._txBody
                     p_el = etree.SubElement(txBody, qn("a:p"))
                     set_ppr(p_el, 12, algn="ctr", spc_aft=0)
-                    append_run_xml(p_el, [{"t": u["caption"]}], 12, C_CAP)
+                    append_run_xml(p_el, u.get("caption_runs") or [{"t": u["caption"]}],
+                                   12, C_CAP)
+                    shapes.append(cap)
+                    y += int(0.36 * EMU_IN)
+                y += int(0.05 * EMU_IN)
+            elif u["kind"] == "figure_entry":
+                # 用户指定"一页一题一图"：描述块（题在前）+ 图 + 图注 同页同拍
+                b = BLOCKS[u["text_unit"]["block"]]
+                sh, h = add_block_shape(slide, b, CX, y, Inches(12.33), pt)
+                shapes.append(sh)
+                y += int(h * EMU_IN) + int(0.06 * EMU_IN)
+                rid = u["image_unit"]["img_rid"]
+                w_in, h_in, target = PL.img_display_size(rid)
+                px = CX + (Inches(12.33) - int(w_in * EMU_IN)) // 2
+                pic = slide.shapes.add_picture(os.path.join(ROOT, "extract", target),
+                                               Emu(int(px)), Emu(int(y)),
+                                               Emu(int(w_in * EMU_IN)), Emu(int(h_in * EMU_IN)))
+                shapes.append(pic)
+                y += int(h_in * EMU_IN) + int(0.05 * EMU_IN)
+                iu = u["image_unit"]
+                if iu.get("caption"):
+                    cap = add_textbox(slide, CX, y, Inches(12.33), Inches(0.34))
+                    txBody = cap.text_frame._txBody
+                    p_el = etree.SubElement(txBody, qn("a:p"))
+                    set_ppr(p_el, 12, algn="ctr", spc_aft=0)
+                    append_run_xml(p_el, iu.get("caption_runs") or [{"t": iu["caption"]}],
+                                   12, C_CAP)
                     shapes.append(cap)
                     y += int(0.36 * EMU_IN)
                 y += int(0.05 * EMU_IN)

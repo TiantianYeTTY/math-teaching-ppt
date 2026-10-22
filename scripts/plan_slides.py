@@ -35,6 +35,21 @@ SCALES = [1.0, 0.94, 0.9, 0.86, 0.82]
 MIN_PACK = 0.9          # 页内追加组的最低档
 MIN_SC = 0.86           # 整组放置/拆块的最低档
 
+# 用户指定（2026-10-22，硬规则 UG）：同一道题尽量题干与图同页，可"适当缩小图片"顺利合并；
+# 实在放不下才允许例外拆两页（拆分点在"题目|解析"边界）。
+# 机制：按文件名限高等比缩小，est 与 build 同走 img_display_size，口径一致。
+# ⚠️ 文件名以 extract/content.json 的 rid2target 实测为准（块号→文件映射勿凭清单顺序猜测，
+# 九年级 v2 首轮按清单顺序猜全部错位一格）。取值方法：估算器网格搜索 (scale × cap) 找
+# 图片最大可保留值；九年级 v2 定稿取值供量级参考：image3=1.6 / image5=1.0 /
+# image6=0.8(配0.78档) / image13=1.0
+IMG_MAX_H = {}   # 按项目填写；空 = 全部走默认限高（2.2in）
+
+# 用户指定（2026-10-21）：组尾两页合并为一页，值为允许的最低档位。
+# "5.3 双直角斜边中线与函数综合（立达中学 第 25 题）"原 46/47 两页合并
+MANUAL_MERGE_TAIL = {
+    "5.3 双直角斜边中线与函数综合（立达中学 第 25 题）": 0.82,
+}
+
 M_T = re.compile(r"<m:t(?:\s[^>]*)?>([^<]*)</m:t>")
 HAS_TALL = re.compile(r"<m:(f|rad|nary)[ >]")
 
@@ -71,7 +86,9 @@ def est_para_h(b, font):
             wpt += (len("".join(M_T.findall(r["math"]))) * 0.80 + 2.4) * font
     if wpt == 0:
         return 0.0
-    line_w = (CONTENT_W - 0.45) * 72
+    # 行宽余量 0.85in：bullet 缩进+标点禁则+真机字体度量会使贴线段提前折行，
+    # 0.45 不足（六年级 EA-39：估 1 行实 2 行与下一条重叠）
+    line_w = (CONTENT_W - 0.85) * 72
     lines = max(1, math.ceil(wpt / line_w))
     return lines * font * lf / 72 + 0.07 * CALIB
 
@@ -141,8 +158,20 @@ def est_block_h(b, font, tfont):
         return est_math_h(b, font)
     return est_para_h(b, font)
 
+def fix_extent_ratio(w0, h0, info):
+    """Word extent 非等比（原稿手工拉伸）时，在 extent 框内 contain 等比修正，
+    保证展示比例=原图像素比（validate F 项 ±1% 口径）。EA-37。"""
+    nat = info["w"] / info["h"]
+    if h0 > 0 and abs(w0 / h0 - nat) / nat > 0.01:
+        if w0 / h0 > nat:
+            w0 = h0 * nat
+        else:
+            h0 = w0 / nat
+    return w0, h0
+
 def img_display_size(rid):
-    """限高 2.4in；缩小不受限，放大 ≤1.6 倍；窄小图可放大到宽 3.5in"""
+    """限高 2.4in；缩小不受限，放大 ≤1.6 倍；窄小图可放大到宽 3.5in。
+    IMG_MAX_H：用户指定合并页"适当缩小图片"时按文件名限高（等比缩小，est/build 同口径）"""
     target = RID2T[rid]
     base = os.path.basename(target)
     info = IMG_INFO[base]
@@ -158,13 +187,19 @@ def img_display_size(rid):
             break
     else:
         w0, h0 = info["w"] / 96, info["h"] / 96
+    w0, h0 = fix_extent_ratio(w0, h0, info)
     s = min(8.8 / w0, 2.2 / h0, 1.6)
     if w0 * s < 3.5 and h0 * s < 2.0:
         s = min(3.5 / w0, 2.2 / h0, 2.2)
-    return w0 * s, h0 * s, target
+    w_in, h_in = w0 * s, h0 * s
+    cap = IMG_MAX_H.get(base)
+    if cap and h_in > cap:
+        w_in, h_in = w_in * cap / h_in, cap
+    return w_in, h_in, target
 
 def img_display_size_in(rid, max_w, max_h):
-    """容器限宽/限高的等比尺寸；缩小不受限，放大 ≤1.6 倍，窄小图可到宽 3.5"""
+    """容器限宽/限高的等比尺寸；缩小不受限，放大 ≤1.6 倍，窄小图可到宽 3.5。
+    IMG_MAX_H 同样生效（est/build 同口径）"""
     target = RID2T[rid]
     base = os.path.basename(target)
     info = IMG_INFO[base]
@@ -180,10 +215,15 @@ def img_display_size_in(rid, max_w, max_h):
             break
     else:
         w0, h0 = info["w"] / 96, info["h"] / 96
+    w0, h0 = fix_extent_ratio(w0, h0, info)
     s = min(max_w / w0, max_h / h0, 1.6)
     if w0 * s < 3.5 and h0 * s < 2.0:
         s = min(3.5 / w0, max_h / h0, 2.2)
-    return w0 * s, h0 * s, target
+    w_in, h_in = w0 * s, h0 * s
+    cap = IMG_MAX_H.get(base)
+    if cap and h_in > cap:
+        w_in, h_in = w_in * cap / h_in, cap
+    return w_in, h_in, target
 
 def img_unit_h(u, font):
     _, h, _ = img_display_size(u["img_rid"])
@@ -197,9 +237,16 @@ def imgpair_unit_h(u, font):
         hs.append(h)
     return max(hs) + 0.32 + 0.08
 
+def figure_entry_unit_h(u, font, tfont):
+    """题图对（描述块+图+图注）：文段 + 图单元 + 块间 0.06（与 build 放置一致）"""
+    tu, iu = u["text_unit"], u["image_unit"]
+    return est_block_h(BLOCKS[tu["block"]], font, tfont) + img_unit_h(iu, font) + 0.06
+
 def unit_h(u, font, tfont):
     if u["kind"] == "imgpair":
         return imgpair_unit_h(u, font)
+    if u["kind"] == "figure_entry":
+        return figure_entry_unit_h(u, font, tfont)
     if u["kind"] == "image":
         return img_unit_h(u, font)
     if u["kind"] == "tablepart":
@@ -346,6 +393,7 @@ for g in groups:
                 nb = BLOCKS[nxt["block"]]
                 if nb.get("style") == "ImageCaption":
                     u["caption"] = para_text(nb)
+                    u["caption_runs"] = nb.get("runs", [])
                     u["caption_block"] = nxt["block"]
                     nxt["consumed"] = True
     g["units"] = [u for u in us if not u.get("consumed")]
@@ -359,14 +407,33 @@ for g in groups:
             merged_units.append({"kind": "imgpair", "gtitle": u.get("gtitle"),
                                  "imgs": [
                                      {"rid": u["img_rid"], "caption": u.get("caption", ""),
+                                      "caption_runs": u.get("caption_runs"),
                                       "block": u["block"]},
                                      {"rid": nxt["img_rid"], "caption": nxt.get("caption", ""),
+                                      "caption_runs": nxt.get("caption_runs"),
                                       "block": nxt["block"]}]})
             j += 2
             continue
         merged_units.append(u)
         j += 1
     g["units"] = merged_units
+    # 用户指定（2026-10-21）：题图集"一页一题一图"——把紧邻图片单元之前的非空
+    # 文字块与该图绑定成原子单元（题在前、图在后，装箱不拆），避免描述留在
+    # 上一页页尾、图落到下一页的题图错位。空段不绑；两图相邻时前图无前置
+    # 文字块也不绑，imgpair 并排逻辑不受影响
+    bound_units = []
+    for u in g["units"]:
+        if (u["kind"] == "image" and bound_units
+                and bound_units[-1]["kind"] == "block"
+                and not bound_units[-1].get("bound_to_image")):
+            pb = BLOCKS[bound_units[-1]["block"]]
+            t = "".join(r.get("t", "") for r in pb.get("runs", []) if "t" in r)
+            if t.strip():
+                bound_units[-1] = {"kind": "figure_entry", "gtitle": u.get("gtitle"),
+                                   "text_unit": bound_units[-1], "image_unit": u}
+                continue
+        bound_units.append(u)
+    g["units"] = bound_units
 
 # ---------- 表格均衡拆行 ----------
 def split_table_rows(u):
@@ -448,6 +515,19 @@ def chunk_group(g, pre_groups=None):
     group_absorb(gl)
     group_rebalance(gl)
     tail_balance(gl)
+    # 用户指定：组尾两页合并（MANUAL_MERGE_TAIL），失败则保持拆分并告警
+    if g["title"] in MANUAL_MERGE_TAIL and len(gl) >= 2:
+        mn = MANUAL_MERGE_TAIL[g["title"]]
+        lu = [u for gg in gl[-1]["groups"] for u in gg["units"]]
+        pu = [u for gg in gl[-2]["groups"] for u in gg["units"]]
+        sc = fit_scale(pu + lu, mn)
+        if sc is not None:
+            gl[-2:] = [{"type": "content", "title": g["title"], "h1": g["h1"],
+                        "groups": [{"units": pu + lu, "gtitle": g["title"]}],
+                        "scale": sc, "cont": 0}]
+            print(f"[manual] 组尾两页已合并为 1 页（scale={sc}）: {g['title']}")
+        else:
+            print(f"[warn] MANUAL_MERGE_TAIL 未通过容量校验(最低档{mn})，保持拆分: {g['title']}")
     return gl
 
 def tail_balance(gl):
@@ -662,8 +742,197 @@ def post_balance(slides):
         group_rebalance(gl)
         for s in gl:
             retitle(s)
+    # 关键修复（2026-10-22）：group_absorb 的 del 只作用于 run 副本列表，
+    # 被吸空的页会以 groups=[] 空壳残留在 slides 主列表（此前靠防御过滤掩盖，
+    # 但会让后续手工 override 的 merge_next 撞上空页）。重建主列表使删除生效。
+    slides[:] = [s for run in runs for s in run]
 
 post_balance(pages)
+
+# ---------- 手工页级 override（九年级会话新增；列表为空 = 纯自动分页，不影响其他页） ----------
+# 每项: {"anchor_block": <Word 块 id>, "action": "...", "scale": <可选显式档位>}
+#   merge_next: anchor 所在页与下一页（同 H1）合一页，组列表直接拼接（保留组间距）
+#   pull_prev:  anchor 所在单元移到前一页末尾（同 gtitle 并入末组，否则新开组）
+#   pull_text:  anchor 为 figure_entry 文字块时仅移文字（题图对拆文，用户指定 2026-10-22）
+#   new_page:   anchor 单元另起新页（硬规则 UH 大标题/新章节起新页的实现；其后邻页
+#               前部组尽量上提填实避免标题独占空页；absorb_any=True 放宽为任意组，
+#               吸收环拟合下限用 op 自带 scale 而非 MIN_SC）
+#   scale 缺省 = fit_scale 自动下探（0.82 兜底）；给定则强制采用（布局以渲染目检为准）
+# ⚠️ 限额/限高会改变自动打包布局：手工 op 可能被自动合并抢先实现或锚点错位，
+# 改 IMG_MAX_H/MANUAL_PAGES 后必须重跑并读 plan 日志核对每个 op 的落点。
+# 九年级 v2 定稿的 op 用法示例（anchor 为 Word 块 id，按项目各异）：
+#   {"anchor_block": 137, "action": "merge_next", "scale": 0.78}          # 题干页并答案页
+#   {"anchor_block": 229, "action": "pull_text"}                          # ②文字上移、图留原页
+#   {"anchor_block": 243, "action": "new_page", "absorb_any": True, "scale": 0.82}
+MANUAL_PAGES = []   # 按项目填写；空 = 纯自动分页
+
+def _page_units(pg):
+    return [u for gg in pg["groups"] for u in gg["units"]]
+
+def _unit_blocks(u):
+    if u["kind"] == "stem":
+        return set(u["blocks"])
+    if u["kind"] == "imgpair":
+        s = {im["block"] for im in u["imgs"]}
+        s |= {im["caption_block"] for im in u["imgs"] if im.get("caption_block") is not None}
+        return s
+    if u["kind"] == "figure_entry":
+        s = {u["text_unit"]["block"], u["image_unit"]["block"]}
+        iu = u["image_unit"]
+        if iu.get("caption_block") is not None:
+            s.add(iu["caption_block"])
+        return s
+    return {u.get("block")}
+
+def _locate(slides, block_id):
+    """返回 (页 idx, 组 idx, 组内单元 idx)；找不到返回 None"""
+    for i, pg in enumerate(slides):
+        if pg["type"] != "content":
+            continue
+        for gi, gg in enumerate(pg["groups"]):
+            for ui, u in enumerate(gg["units"]):
+                if block_id in _unit_blocks(u):
+                    return i, gi, ui
+    return None
+
+def _rescale(pg, floor=0.82):
+    us = _page_units(pg)
+    pg["scale"] = fit_scale(us, MIN_SC) or fit_scale(us, floor) or pg.get("scale", 1.0)
+
+def _append_units(pg, moved):
+    """moved 单元挂到 pg 末尾：同 gtitle 并入末组（保留组间距），否则新开一组"""
+    last = pg["groups"][-1] if pg["groups"] else None
+    if last is not None and last.get("gtitle") == moved[0].get("gtitle"):
+        last["units"] = last["units"] + moved
+    else:
+        pg["groups"].append({"units": moved, "gtitle": moved[0].get("gtitle")})
+
+def _fit_or(units, explicit):
+    if explicit:
+        return explicit
+    return fit_scale(units, MIN_SC) or fit_scale(units, 0.82) or 0.82
+
+def manual_overrides(slides):
+    for ov in MANUAL_PAGES:
+        loc = _locate(slides, ov["anchor_block"])
+        if loc is None:
+            print("manual override: anchor block %s not found, skip" % ov["anchor_block"])
+            continue
+        idx, gi, ui = loc
+        act = ov["action"]
+        if act == "merge_next":
+            if idx + 1 >= len(slides) or slides[idx + 1]["type"] != "content" \
+               or slides[idx + 1].get("h1") != slides[idx].get("h1"):
+                print("manual override: merge_next block %s precondition failed, skip" % ov["anchor_block"])
+                continue
+            ua, ub = _page_units(slides[idx]), _page_units(slides[idx + 1])
+            import os as _os
+            if _os.environ.get("PLAN_DEBUG"):
+                bl = lambda us: sorted(b for u in us for b in _unit_blocks(u) if b)
+                print("  [dbg] merge anchor %s: idx=%d L=%s R=%s" % (
+                    ov["anchor_block"], idx, bl(ua), bl(ub)))
+            sc = _fit_or(ua + ub, ov.get("scale"))
+            if fit_scale(ua + ub, MIN_SC) is None and not ov.get("scale"):
+                print("manual override: estimator rejects merge, force %.2f (render verifies)" % sc)
+            slides[idx]["groups"] = slides[idx]["groups"] + slides[idx + 1]["groups"]
+            slides[idx]["scale"] = sc
+            slides[idx]["cont"] = 0
+            retitle(slides[idx])
+            del slides[idx + 1]
+            print("manual override: merged p%d + p%d -> scale %.2f" % (idx, idx + 1, sc))
+        elif act == "pull_prev":
+            if idx == 0 or slides[idx - 1]["type"] != "content":
+                print("manual override: pull_prev block %s precondition failed, skip" % ov["anchor_block"])
+                continue
+            src = slides[idx]["groups"][gi]
+            u = src["units"].pop(ui)
+            if not src["units"]:
+                del slides[idx]["groups"][gi]
+            moved = [u]
+            prev = slides[idx - 1]
+            sc_a = _fit_or(_page_units(prev) + moved, ov.get("scale"))
+            _append_units(prev, moved)
+            prev["scale"] = sc_a
+            retitle(prev)
+            if not slides[idx]["groups"]:
+                del slides[idx]
+            else:
+                _rescale(slides[idx])
+                retitle(slides[idx])
+            print("manual override: pulled block %s from p%d to p%d (scale %.2f)"
+                  % (ov["anchor_block"], idx + 1, idx, sc_a))
+        elif act == "pull_text":
+            if idx == 0 or slides[idx - 1]["type"] != "content":
+                print("manual override: pull_text block %s precondition failed, skip" % ov["anchor_block"])
+                continue
+            gg = slides[idx]["groups"][gi]
+            u = gg["units"][ui]
+            if u["kind"] == "figure_entry":
+                moved = [dict(u["text_unit"], gtitle=u.get("gtitle"))]
+                gg["units"][ui] = u["image_unit"]   # 图（含图注字段）留在原页
+            else:
+                moved = [gg["units"].pop(ui)]
+            prev = slides[idx - 1]
+            sc_a = _fit_or(_page_units(prev) + moved, ov.get("scale"))
+            _append_units(prev, moved)
+            prev["scale"] = sc_a
+            retitle(prev)
+            _rescale(slides[idx])
+            retitle(slides[idx])
+            print("manual override: pulled text of block %s from p%d to p%d (scale %.2f)"
+                  % (ov["anchor_block"], idx + 1, idx, sc_a))
+        elif act == "new_page":
+            pg = slides[idx]
+            gg = pg["groups"][gi]
+            if gi == 0 and ui == 0:
+                print("manual override: block %s already at page start, skip" % ov["anchor_block"])
+                continue
+            head_groups = pg["groups"][:gi]
+            if gg["units"][:ui]:
+                head_groups = head_groups + [{"units": gg["units"][:ui],
+                                              "gtitle": gg.get("gtitle")}]
+            tail_groups = []
+            if gg["units"][ui:]:
+                tail_groups.append({"units": gg["units"][ui:], "gtitle": gg.get("gtitle")})
+            tail_groups = tail_groups + pg["groups"][gi + 1:]
+            # 从下一页前部吸收同 gtitle 的组，避免新页只剩大标题一片空白；
+            # absorb_any=True 时放宽为任意组（用于节标记"同型压轴真题演练："后接条目）
+            j = idx + 1
+            while (j < len(slides) and slides[j]["type"] == "content"
+                   and slides[j].get("h1") == pg.get("h1") and tail_groups):
+                ng_first = slides[j]["groups"][0]
+                if not ov.get("absorb_any") and \
+                   ng_first.get("gtitle") != tail_groups[-1].get("gtitle"):
+                    break
+                trial = _page_units({"groups": tail_groups}) + ng_first["units"]
+                _floor = ov.get("scale") or MIN_SC
+                if fit_scale(trial, _floor) is None:
+                    break
+                tail_groups.append(ng_first)
+                rest = slides[j]["groups"][1:]
+                if rest:
+                    slides[j]["groups"] = rest
+                    _rescale(slides[j])
+                    retitle(slides[j])
+                    break
+                del slides[j]
+            new_pg = {"type": "content", "h1": pg["h1"], "groups": tail_groups,
+                      "scale": _fit_or(_page_units({"groups": tail_groups}), ov.get("scale")),
+                      "cont": 0}
+            pg["groups"] = head_groups
+            # 头部页保持自身自然档位（不吃操作显式 scale——那只用于新页/吸收）
+            pg["scale"] = fit_scale(_page_units(pg), MIN_SC) or \
+                fit_scale(_page_units(pg), 0.82) or 1.0
+            retitle(pg)
+            slides.insert(idx + 1, new_pg)
+            retitle(new_pg)
+            print("manual override: new page before block %s (p%d), scale %.2f"
+                  % (ov["anchor_block"], idx + 2, new_pg["scale"]))
+        else:
+            print("manual override: unknown action %r, skip" % act)
+    return slides
+
+manual_overrides(pages)
 pages = [pg for pg in pages if pg.get("groups")]  # 防御：剔除再平衡产生的空页
 
 final_slides = [{"type": "cover", "title": para_text(BLOCKS[0]), "blocks": [0, 1, 2]}]

@@ -163,6 +163,30 @@ def main():
         elif ns == WNS and tag == "tbl":
             blocks.append(parse_table(child))
 
+    # 拆分混合段：同一段落内"文字/公式 + 图片"拆为 文字段(前) + 图片段(后)，
+    # 否则图片单元渲染路径只出图，描述文字与内嵌公式整段丢失（EA-31）
+    split_blocks = []
+    for b in blocks:
+        if b.get("kind") == "para":
+            runs = b.get("runs", [])
+            has_img = any("img" in r for r in runs)
+            has_content = any(("t" in r and r.get("t", "").strip()) or "math" in r
+                              for r in runs)
+            if has_img and has_content:
+                text_runs = [r for r in runs if "img" not in r]
+                img_runs = [r for r in runs if "img" in r]
+                if any(("t" in r and r.get("t", "").strip()) or "math" in r
+                       for r in text_runs):
+                    nb = dict(b)
+                    nb["runs"] = text_runs
+                    split_blocks.append(nb)
+                for ir in img_runs:
+                    split_blocks.append({"kind": "para", "style": b.get("style"),
+                                         "num": None, "runs": [ir]})
+                continue
+        split_blocks.append(b)
+    blocks = split_blocks
+
     # 提取 media
     media_map = {}
     for name in zf.namelist():
