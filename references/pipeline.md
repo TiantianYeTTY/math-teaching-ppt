@@ -38,14 +38,16 @@ out/<PPT_DECK_NAME>.pptx
 
 ## 3. run 级颜色审计（交付前必跑）
 
-```python
-# 解包 pptx，逐 slide 逐 a:p 逐 a:r 扫描 rPr/solidFill/srgbClr
-# 输出所有 3E6FC9（蓝）run 的 (页码, 段落文本, run 文本)，人工核对语义白名单：
-#   合法：答案行整行 / 粗体引导词(≤24字到冒号) / 标题行粗体run / 板块行粗体段 / 变式标题行 / 封面标题
-#   违规：正文编号、括号说明、任何非粗体正文出现蓝色
-# 同时核对 D9534F（红）只出现在"易错点："类标签。
-# 完整脚本见 GitHub 仓库或按此描述现场编写（约 40 行，无第三方依赖，zipfile+lxml 即可）。
+```bash
+PPT_DECK_NAME=<交付文件名> python scripts/color_audit.py > out/color_audit.txt
 ```
+
+脚本 `scripts/color_audit.py`（zipfile+lxml，无第三方依赖）：解包 pptx，逐 slide 逐 a:p 逐 a:r
+扫描 rPr/solidFill/srgbClr，输出所有 3E6FC9（蓝）与 D9534F（红）run 的 (页码, 段落文本, run 文本)。
+人工核对语义白名单：
+- 合法蓝：答案行整行 / 粗体引导词(≤24字到冒号) / 标题行粗体run / 板块行粗体段 / 变式标题行 / 封面标题（含副题）
+- 违规：正文编号、括号说明、任何非粗体正文出现蓝色
+- 红：只允许出现在"易错点/易错位置"类标签
 
 ## 4. 环境变量速查
 
@@ -65,6 +67,33 @@ out/<PPT_DECK_NAME>.pptx
 | validate 覆盖率缺失 | 纯公式/纯图片段是否入块；封面标题是否同源豁免 | EA-9, EA-34 |
 | 计划页数异常多（稀疏） | 行高余量是否被一刀切 | EA-22 |
 | 颜色"莫名其妙" | run 级颜色审计清单 | EA-23, EA-24 |
+| 题图描述文字/图注公式丢失 | 是否"文字+公式+图"混合段未拆块；图注是否用 caption_runs | EA-38 |
+| check_render 报"重叠"但截图目检干净 | 字体接缝伪影（同块同行被拆）；确认已含同块同行合并规则 | EA-42 |
+
+## 5b. 手工页级 override 与图高限额（用户点名"某两页并一页/某图挪页/大标题起新页"时用）
+
+自动分页无法满足用户点名的个别页布局时，用脚本内配置做**页级手术**，其余页保持自动结果：
+
+- `IMG_MAX_H`（plan_slides.py 头部，硬规则 UG）：`{"<media 文件名>": <限高 in>}`——
+  est 与 build 同走 img_display_size，等比缩小口径一致；空 = 全部走默认限高 2.2in。
+  ⚠️ 文件名以 extract/content.json 的 `rid2target` 实测为准，勿按清单顺序猜（EA-46）。
+- `MANUAL_PAGES`（plan_slides.py 头部，九年级 v2 扩展为四动作；在 post_balance 之后执行，结果为最终态）：
+  - `merge_next`：anchor 所在页与下一页（同 H1）合一页，组列表拼接（保留组间距）；
+  - `pull_prev`：anchor 单元移到前一页末尾（同 gtitle 并入末组，否则新开组）；
+  - `pull_text`：figure_entry 拆文——仅文字上移、图（含图注字段）留原页（用于"②题目并上一页"类需求）；
+  - `new_page`：anchor 单元另起新页（硬规则 UH 实现），随后从下一页前部吸收组填实；
+    `absorb_any: True` 跳过 gtitle 同组限制（节标记后接异组条目时用）；吸收环拟合下限用 op 自带 `scale` 而非 MIN_SC。
+  - `scale` 缺省自动下探至 0.82，可显式指定档位（低于常规档属用户知情选择，以渲染目检为准）。
+- `MANUAL_MERGE_TAIL`（八年级新增）：按组标题把组尾两页合并（在 chunk_group 内生效）。
+- **通用纪律**：
+  - 改完必须全链重跑（plan→check→build→validate→render→目检），并 diff 新旧 slides.json
+    确认**只有点名页变化、其余页逐块一致**（用块签名+SequenceMatcher 比对）；
+  - **合并可行性三重裁决**：估算器网格搜索（scale × 图高）找图片最大可保留值 → validate
+    0 错误（形状越界即否决）→ check_render 渲染实测；估算器不放行时勿强行硬塞；
+  - ⚠️ 限额/限高会改变自动打包布局：手工 op 可能被自动合并**抢先实现**（此时删掉冗余 op）
+    或锚点错位（EA-47），每次改参后必须重跑并读 plan 日志核对每个 op 的落点；
+  - 限高使大 stem 不再超页时会熔回单单元（拍数减少是良性——题干+图同拍更符合动画规则），
+    内容完整性以 check_plan 覆盖率 100% 为准。
 
 ## 6. 验收清单（逐项打勾，缺一不交付）
 

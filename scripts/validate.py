@@ -69,6 +69,12 @@ def expected_content_texts(s):
         elif u["kind"] == "image":
             if u.get("caption"):
                 out.append(u["caption"])
+        elif u["kind"] == "figure_entry":
+            t = para_text_of_block(BLOCKS[u["text_unit"]["block"]])
+            if t:
+                out.append(t)
+            if u["image_unit"].get("caption"):
+                out.append(u["image_unit"]["caption"])
         elif u["kind"] == "imgpair":
             for im in u["imgs"]:
                 if im.get("caption"):
@@ -237,25 +243,28 @@ for i, name in enumerate(slide_names):
             tag = etree.QName(sp).localname
             errors.append(f"p{n}: 形状越界 y+h={((y+cy2)/914400):.2f}in ({tag})")
 
-# 数学总数
+# 数学总数 / 图片期望数（从 Word 提取结果推导，勿写死——各文档图数不同）
 doc_math = 0
+doc_pics = 0
 def count_math(b):
-    global doc_math
+    global doc_math, doc_pics
     if b["kind"] == "para":
         doc_math += sum(1 for r in b["runs"] if "math" in r)
+        doc_pics += sum(1 for r in b["runs"] if "img" in r)
     else:
         for row in b["rows"]:
             for c in row["cells"]:
                 for p in c["paras"]:
                     doc_math += sum(1 for r in p["runs"] if "math" in r)
+                    doc_pics += sum(1 for r in p["runs"] if "img" in r)
 for b in BLOCKS:
     count_math(b)
 print(f"math: docx={doc_math} pptx={total_math}")
-print(f"pics: pptx={total_pics} (expect 8)")
+print(f"pics: pptx={total_pics} (expect {doc_pics})")
 if doc_math != total_math:
     errors.append(f"公式数不一致 docx={doc_math} pptx={total_math}")
-if total_pics != 8:
-    errors.append(f"图片数不一致 expect=8 actual={total_pics}")
+if total_pics != doc_pics:
+    errors.append(f"图片数不一致 expect={doc_pics} actual={total_pics}")
 
 print("\n==== 结果 ====")
 print("errors:", len(errors))

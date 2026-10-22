@@ -16,15 +16,40 @@ issues = []
 
 def lines(page):
     d = page.get_text("dict")
-    out = []
-    for blk in d.get("blocks", []):
+    frags = []
+    for bi, blk in enumerate(d.get("blocks", [])):
         if blk.get("type") != 0:
             continue
         for ln in blk["lines"]:
             txt = "".join(s["text"] for s in ln["spans"]).strip()
             if txt:
-                out.append((pymupdf.Rect(ln["bbox"]), txt))
-    return out
+                frags.append([bi, pymupdf.Rect(ln["bbox"]), txt])
+    # 同一文本块内 y 向重叠 >50% 且 x 向相交/相邻的片段 = 同一视觉行（LO 兜底在字体
+    # 切换处会把一行拆成多个 line 对象，bbox 接缝交叠造成伪重叠报警）。表格同一行
+    # 的各单元格虽同 y 带但 x 向分离（列间有真实间隙），不会被合并。跨文本块（跨
+    # shape）的真实遮挡不受影响——那是不同 block 之间的比较。
+    frags.sort(key=lambda f: (f[0], f[1].y0, f[1].x0))
+    out = []
+    for bi, r, t in frags:
+        hit = None
+        for o in out:
+            if o[0] != bi:
+                continue
+            inter_y = min(o[1].y1, r.y1) - max(o[1].y0, r.y0)
+            minh = min(o[1].y1 - o[1].y0, r.y1 - r.y0)
+            if minh <= 0 or inter_y <= 0.5 * minh:
+                continue
+            inter_x = min(o[1].x1, r.x1) - max(o[1].x0, r.x0)
+            gap_x = max(o[1].x0, r.x0) - min(o[1].x1, r.x1)
+            if inter_x > 0 or gap_x < 0.02 * 72:
+                hit = o
+                break
+        if hit is not None:
+            hit[1] = hit[1] | r
+            hit[2] = hit[2] + t
+        else:
+            out.append([bi, r, t])
+    return [(r, t) for _, r, t in out]
 
 def inter_area(a, b):
     r = a & b
