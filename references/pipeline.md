@@ -82,7 +82,13 @@ PPT_DECK_NAME=<交付文件名> python scripts/color_audit.py > out/color_audit.
   - `pull_prev`：anchor 单元移到前一页末尾（同 gtitle 并入末组，否则新开组）；
   - `pull_text`：figure_entry 拆文——仅文字上移、图（含图注字段）留原页（用于"②题目并上一页"类需求）；
   - `new_page`：anchor 单元另起新页（硬规则 UH 实现），随后从下一页前部吸收组填实；
-    `absorb_any: True` 跳过 gtitle 同组限制（节标记后接异组条目时用）；吸收环拟合下限用 op 自带 `scale` 而非 MIN_SC。
+    `absorb_any: True` 跳过 gtitle 同组限制（节标记后接异组条目时用）；吸收环拟合下限用 op 自带 `scale` 而非 MIN_SC；
+    `absorb_pages: N` 限制最多吸收几页（防吸完目标页后继续吞下一节同 gtitle 标题组，EA-54）；
+    `cont` 覆盖新页的（续）标记（缺省 0=无（续）；续解析类新页传 1）。
+  - `merge_next` / `new_page` / `pull_prev` 均支持 `cont` 覆盖。
+  - `pull_prev` 支持 **`img_cap`**（单元级图限高，est 的 img_unit_h 与 build 的 image 分支同口径）——
+    手工挪图要缩图时**必须用它**，勿把键加进 IMG_MAX_H（那是全局打包参数，会偏移后续自动布局、
+    令全部既有锚点错位，EA-54）。
   - `scale` 缺省自动下探至 0.82，可显式指定档位（低于常规档属用户知情选择，以渲染目检为准）。
 - `MANUAL_MERGE_TAIL`（八年级新增）：按组标题把组尾两页合并（在 chunk_group 内生效）。
 - **通用纪律**：
@@ -94,6 +100,10 @@ PPT_DECK_NAME=<交付文件名> python scripts/color_audit.py > out/color_audit.
     或锚点错位（EA-47），每次改参后必须重跑并读 plan 日志核对每个 op 的落点；
   - 限高使大 stem 不再超页时会熔回单单元（拍数减少是良性——题干+图同拍更符合动画规则），
     内容完整性以 check_plan 覆盖率 100% 为准。
+- **⛔ 工作流决定（用户 2026-10-23 定）：一切 PPT 修改统一走管线重建（上述配置化机制），不做交付文件的 XML 精修**。
+  依据：跨页结构操作的精修在 OMML 重页面会引发渲染幻影（EA-51）；配置已含用户全部点名修改，重建=确定性复现、无覆盖风险；
+  结构类修改精修的调试轮次反超 token 收益。执行纪律：重建前备份交付文件；若用户可能在 PowerPoint 手工改过内容，先说明并 diff 合并；
+  纯文本类微调确需精修时仅限 EA-51 例外条款且必须 LO 渲染目检防幻影。
 
 ## 6. 验收清单（逐项打勾，缺一不交付）
 
